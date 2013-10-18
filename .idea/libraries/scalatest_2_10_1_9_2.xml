@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="scalatest_2.10-1.9.2">
+    <CLASSES>
+      <root url="jar://$USER_HOME$/scala-2.10.3/lib/scalatest_2.10-1.9.2.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>
