@@ -56,16 +56,16 @@ class SampleRateConverter(private var inputSamplingRate: Double, private var out
 
 }
 
-case class ConvertSampleRateRequest(buffer: AudioBuffer, requestor: ActorRef)
-
 class ConvertSampleRateActor(inputRate: Int, outputRate: Int) extends AudioSystemActor {
   val converter = new SampleRateConverter(inputRate, outputRate)
 
-  def receive = {
+  def handleBufferRequest() {}
+
+  /*def receive = {
     case ConvertSampleRateRequest(AudioBuffer(buffer, BufferConfig(inputRate)), requestor) => {
       //converter.convert(buffer)
       requestor ! BufferResponse(AudioBuffer(buffer, BufferConfig(outputRate)))
     }
     case _ => println("Invalid ConvertSampleRateActor request")
-  }
+  }*/
 }

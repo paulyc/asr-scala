@@ -45,6 +45,7 @@ trait AudioSystemDefaults {
   val DefaultSampleRate = 48000
 
   implicit val executionContext : ExecutionContext = ExecutionContext.Implicits.global
+  implicit val timeout = Timeout(5000L)
 }
 
 object AudioSystem extends AudioSystemDefaults {
@@ -72,25 +73,25 @@ case class StereoFrame(var left: AudioSystem.InternalSample, var right: AudioSys
 
 case class BufferConfig(sampleRate: Int)
 case class AudioBuffer(buffer: AudioSystem.SampleBuffer, config: BufferConfig)
+case class InternalAudioBuffer(buffer: AudioSystem.SampleBuffer)
 
-case class BufferRequest(config: BufferConfig)
-case class BufferResponse(buffer: AudioBuffer)
+object EndOfAudioBuffers extends AudioBuffer(null, InternalBufferConfig)
+
+case class BufferRequest()
+case class BufferRequestConfig(config: BufferConfig)
+case class BufferResponse(buffer: Option[InternalAudioBuffer])
 
 case class AllocateBuffer()
 case class GotBuffer(buffer : AudioSystem.SampleBuffer)
 case class FreeBuffer(buffer : AudioSystem.SampleBuffer)
 
 object InternalBufferConfig extends BufferConfig(AudioSystem.DefaultSampleRate)
-class InternalAudioBuffer(override val buffer: AudioSystem.SampleBuffer) extends AudioBuffer(buffer, InternalBufferConfig)
-object InternalAudioBuffer {
-  def apply(buffer: AudioSystem.SampleBuffer) = new InternalAudioBuffer(buffer)
-}
 
-abstract class AudioSystemActor(implicit val outputSamplingRate: Int = AudioSystem.DefaultSampleRate) extends Actor
-  with AudioSystemDefaults {
-  implicit val timeout = Timeout(5000L)
 
-  def allocateBuffer() : SampleBuffer = {
+case class SetSource(actor: ActorRef)
+
+trait BufferHandler extends AudioSystemDefaults {
+  protected def allocateBuffer() : SampleBuffer = {
     AudioSystem.bufferPoolActor ? AllocateBuffer() onComplete {
       case Success(buffer) => buffer
       case Failure(_) => throw new Exception("Something blew up in allocateBuffer!")
@@ -98,22 +99,31 @@ abstract class AudioSystemActor(implicit val outputSamplingRate: Int = AudioSyst
     null
   }
 
-  def freeBuffer(buffer: SampleBuffer) {
+  protected def freeBuffer(buffer: SampleBuffer) {
     AudioSystem.bufferPoolActor ! FreeBuffer(buffer)
   }
 }
 
-class ZeroSourceActor extends AudioSystemActor {
+abstract class AudioSystemActor(implicit val outputSamplingRate: Int = AudioSystem.DefaultSampleRate) extends Actor
+  with BufferHandler {
+
+  protected var sourceActor : Option[ActorRef] = None
+
   def receive = {
-    case BufferRequest(_) => sender ! zeroBufferReply
+    case SetSource(actor) => sourceActor = Some(actor)
+    case BufferRequest()  => handleBufferRequest()
   }
 
-  def zeroBufferReply = {
+  protected def handleBufferRequest()
+}
+
+class ZeroSourceActor extends AudioSystemActor {
+  override protected def handleBufferRequest() {
     val buffer = allocateBuffer()
     for (frame <- buffer) {
       frame(0.0f, 0.0f)
     }
-    BufferResponse(AudioBuffer(buffer, InternalBufferConfig))
+    BufferResponse(Some(InternalAudioBuffer(buffer)))
   }
 }
 
@@ -124,13 +134,17 @@ class FileSourceActor extends AudioSystemActor {
 
   val sampleRateConverter : Option[ActorRef] = NativeSampleRate == outputSamplingRate match {
     case true => None
-    case false => Some(context.actorOf(Props(new ConvertSampleRateActor(NativeSampleRate, outputSamplingRate))))
+    case false => {
+      val actor = context.actorOf(Props(new ConvertSampleRateActor(NativeSampleRate, outputSamplingRate)))
+      actor ! SetSource(self)
+      Some(actor)
+    }
   }
 
   object InputBufferConfig extends BufferConfig(NativeSampleRate)
-  object OutputBufferConfig extends BufferConfig(outputSamplingRate)
+  //object OutputBufferConfig extends BufferConfig(outputSamplingRate)
 
-  def receive = {
+  /*def receive = {
     case BufferRequest(_) => returnBuffer()
     //case BufferRequest(DefaultBufferConfig()) => returnBuffer()
     //case BufferRequest(BufferConfig(AudioSystem.DefaultBufferSize, NativeChannels, sampleRate)) => returnBufferWithSampleRate()
@@ -138,21 +152,23 @@ class FileSourceActor extends AudioSystemActor {
     //case BufferRequest(BufferConfig(samples, NativeChannels, NativeSampleRate)) => returnBuffer(samples)
     //case BufferRequest(BufferConfig(samples, NativeChannels, sampleRate)) => returnBufferWithSampleRate(samples, sampleRate)
     //case BufferRequest(BufferConfig(samples, channels, sampleRate)) => throw new Exception("Channel conversion not supported")
+  }*/
+
+  override protected def handleBufferRequest() {
+    sampleRateConverter match {
+      case Some(converter) => {
+        if (sender == converter) {
+          sender ! BufferResponse(nextBufferFromFile())
+        } else {
+          sender forward (converter ? BufferRequest()).wait()
+        }
+      }
+      case None => sender ! BufferResponse(nextBufferFromFile())
+    }
   }
 
-  def returnBuffer() {
+  protected def nextBufferFromFile() : Option[InternalAudioBuffer] = {
     val buffer = allocateBuffer()
-
-    for (frame <- buffer) {
-      frame.left = 0.0f
-      frame.right = 0.0f
-    }
-
-    // get data from file
-
-    sampleRateConverter match {
-      case Some(converter) => converter ! ConvertSampleRateRequest(AudioBuffer(buffer, InputBufferConfig), sender)
-      case None => sender ! BufferResponse(AudioBuffer(buffer, OutputBufferConfig))
-    }
+    Some(InternalAudioBuffer(buffer))
   }
 }
