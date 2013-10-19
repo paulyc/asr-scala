@@ -20,23 +20,14 @@
 package com.github.paulyc.asr.math
 
 /**
- * Created by paulyc on 10/17/13.
+ * Created by paulyc on 10/18/13.
  */
 
-class KaiserWindow(alpha: Double) {
-  val beta = math.Pi * alpha
-  def apply(t: Double) = I_0(beta * math.sqrt(1 - t*t) ) / I_0(beta)
+trait FancyDouble {
+  implicit def fancyDouble(lhs:Double) = new {
+    def ~=(rhs: Double)(implicit delta : Double = 0.00001) : Boolean = {
+      val diff = math.abs(lhs - rhs)
+      diff < delta
+    }
+  }
 }
-
-class KaiserWindowTable(alpha: Double) extends KaiserWindow(alpha) {
-  private val tableSize = 10000
-  private val table : Array[Double] = (0 until tableSize).map(kaiser).toArray
-  private def indexToTime(i: Int) = i.toDouble / tableSize
-  private def timeToIndex(t: Double) = math.min((math.abs(t) * tableSize).toInt, tableSize - 1)
-
-  def kaiser(i: Int) = this(indexToTime(i))
-  def get(i: Int) = table(i)
-  def get(t: Double) = table(timeToIndex(t))
-}
-
-object KaiserWindowTable extends KaiserWindowTable(2.0)

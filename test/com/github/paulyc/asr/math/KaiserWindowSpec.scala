@@ -19,24 +19,18 @@
 
 package com.github.paulyc.asr.math
 
+import org.scalatest.FlatSpec
+
 /**
- * Created by paulyc on 10/17/13.
+ * Created by paulyc on 10/18/13.
  */
-
-class KaiserWindow(alpha: Double) {
-  val beta = math.Pi * alpha
-  def apply(t: Double) = I_0(beta * math.sqrt(1 - t*t) ) / I_0(beta)
+class KaiserWindowSpec extends FlatSpec with FancyDouble {
+  "KaiserWindowTable" should "have correct values and clamp outside [-1.0, 1.0]" in {
+    assert(KaiserWindowTable.get(0.0) ~= 1.0)
+    assert(KaiserWindowTable.get(0.5) ~= 0.464862)
+    assert(KaiserWindowTable.get(-0.5) ~= 0.464862)
+    assert(KaiserWindowTable.get(1.0) ~= 0.0115026)
+    assert(KaiserWindowTable.get(1.1) ~= 0.0115026)
+    assert(KaiserWindowTable.get(0.25) ~= 0.833118)
+  }
 }
-
-class KaiserWindowTable(alpha: Double) extends KaiserWindow(alpha) {
-  private val tableSize = 10000
-  private val table : Array[Double] = (0 until tableSize).map(kaiser).toArray
-  private def indexToTime(i: Int) = i.toDouble / tableSize
-  private def timeToIndex(t: Double) = math.min((math.abs(t) * tableSize).toInt, tableSize - 1)
-
-  def kaiser(i: Int) = this(indexToTime(i))
-  def get(i: Int) = table(i)
-  def get(t: Double) = table(timeToIndex(t))
-}
-
-object KaiserWindowTable extends KaiserWindowTable(2.0)
