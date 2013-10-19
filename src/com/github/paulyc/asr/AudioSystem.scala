@@ -20,7 +20,6 @@
 package com.github.paulyc.asr
 
 import akka.actor.{ActorSystem, ActorRef, Props, Actor}
-import scala.collection.mutable
 import akka.util.Timeout
 import akka.pattern.ask
 import scala.util.{Success, Failure}
@@ -93,8 +92,9 @@ case class SetSource(actor: ActorRef)
 trait BufferHandler extends AudioSystemDefaults {
   protected def allocateBuffer() : SampleBuffer = {
     AudioSystem.bufferPoolActor ? AllocateBuffer() onComplete {
-      case Success(buffer) => buffer
-      case Failure(_) => throw new Exception("Something blew up in allocateBuffer!")
+      case Success(GotBuffer(buffer)) => return buffer
+      case Success(_)                 => throw new Exception("WTF happened in BufferHandler.allocateBuffer?")
+      case Failure(_)                 => throw new Exception("BufferHandler.allocateBuffer blew up")
     }
     null
   }
@@ -142,17 +142,6 @@ class FileSourceActor extends AudioSystemActor {
   }
 
   object InputBufferConfig extends BufferConfig(NativeSampleRate)
-  //object OutputBufferConfig extends BufferConfig(outputSamplingRate)
-
-  /*def receive = {
-    case BufferRequest(_) => returnBuffer()
-    //case BufferRequest(DefaultBufferConfig()) => returnBuffer()
-    //case BufferRequest(BufferConfig(AudioSystem.DefaultBufferSize, NativeChannels, sampleRate)) => returnBufferWithSampleRate()
-    //case _ => throw new Exception("Buffer type not supported")
-    //case BufferRequest(BufferConfig(samples, NativeChannels, NativeSampleRate)) => returnBuffer(samples)
-    //case BufferRequest(BufferConfig(samples, NativeChannels, sampleRate)) => returnBufferWithSampleRate(samples, sampleRate)
-    //case BufferRequest(BufferConfig(samples, channels, sampleRate)) => throw new Exception("Channel conversion not supported")
-  }*/
 
   override protected def handleBufferRequest() {
     sampleRateConverter match {
@@ -160,7 +149,7 @@ class FileSourceActor extends AudioSystemActor {
         if (sender == converter) {
           sender ! BufferResponse(nextBufferFromFile())
         } else {
-          sender forward (converter ? BufferRequest()).wait()
+          converter ? BufferRequest() onSuccess { case _ => sender ! _ }
         }
       }
       case None => sender ! BufferResponse(nextBufferFromFile())
