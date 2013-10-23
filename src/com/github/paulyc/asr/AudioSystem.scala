@@ -21,7 +21,7 @@ package com.github.paulyc.asr
 
 import akka.actor.{ActorSystem, ActorRef, Props, Actor}
 import akka.pattern.ask
-import scala.concurrent.{Await, ExecutionContext}
+import scala.concurrent.{Future, Await, ExecutionContext}
 import scala.concurrent.duration._
 import akka.util.Timeout
 
@@ -44,7 +44,19 @@ trait AudioSystemDefaults {
   val DefaultSampleRate = 48000
 
   implicit val executionContext = ExecutionContext.Implicits.global
-  implicit val timeout = Timeout(5 seconds)
+  implicit val timeoutInterval : FiniteDuration = 5.seconds
+  implicit val timeout = Timeout(timeoutInterval)
+
+  def awaitResult(future: Future[Any]) : Any = {
+    try { // really necessary? nothing here can timeout unless there is a serious bug
+      Await.result(future, timeoutInterval)
+    } catch {
+      case ex : Exception => {
+        println(ex + " in awaitResult")
+        null
+      }
+    }
+  }
 }
 
 object AudioSystem extends AudioSystemDefaults {
@@ -68,9 +80,7 @@ case class StereoFrame(var left: AudioSystem.InternalSample, var right: AudioSys
     this.left = left
     this.right = right
   }
-  def unapply() = {
-    (left, right)
-  }
+  def unapply() = (left, right)
 }
 
 case class BufferConfig(sampleRate: Int)
@@ -87,11 +97,19 @@ case class FreeBuffer(buffer : AudioSystem.SampleBuffer)
 
 object InternalBufferConfig extends BufferConfig(AudioSystem.DefaultSampleRate)
 
+case class StreamPosition(samplePos: Long)
+
+// convert time to samples etc
+trait PositionConversions {
+  //def
+}
+
 case class SetSource(actor: ActorRef)
+case class SeekPosition(position: StreamPosition)
 
 trait BufferHandler extends AudioSystemDefaults {
   protected def allocateBuffer() : SampleBuffer = {
-    Await.result(AudioSystem.bufferPoolActor ? AllocateBuffer, 1 second) match {
+    awaitResult(AudioSystem.bufferPoolActor ? AllocateBuffer) match {
       case GotBuffer(buffer) => buffer
       case _ => null
     }
@@ -108,11 +126,23 @@ abstract class AudioSystemActor(implicit val outputSamplingRate: Int = AudioSyst
   protected var sourceActor : Option[ActorRef] = None
 
   def receive = {
-    case SetSource(actor) => sourceActor = Some(actor)
-    case BufferRequest  => handleBufferRequest()
+    case SetSource(actor)  => sourceActor = Some(actor)
+    case BufferRequest     => handleBufferRequest()
+    case SeekPosition(pos) => handleSeekPosition(pos)
   }
 
   protected def handleBufferRequest()
+  protected def requestBufferFromSource() : Option[SampleBuffer] = {
+    sourceActor match {
+      case Some(actor) => awaitResult(actor ? BufferRequest) match {
+        case BufferResponse(_) => _
+        case _                 => None
+      }
+      case None        => None
+    }
+  }
+
+  protected def handleSeekPosition(pos: StreamPosition) {}
 }
 
 class ZeroSourceActor extends AudioSystemActor {

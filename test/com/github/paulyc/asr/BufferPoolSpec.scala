@@ -20,23 +20,23 @@
 package com.github.paulyc.asr
 
 import org.scalatest.FlatSpec
-import akka.actor.{Props, ActorSystem}
+import akka.actor.Props
 import akka.pattern.ask
-import scala.concurrent.{ExecutionContext, Await, Future}
+import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
-import akka.util.Timeout
 
 /**
  * Created by paulyc on 10/22/13.
  */
 class BufferPoolSpec extends FlatSpec with TestActorSystem {
+  val numBuffers = 10
   val bufferPoolActor = actorSystem.actorOf(Props(new BufferPoolActor(AudioSystem.DefaultBufferFactory)))
 
   "A BufferPoolActor" should "create and pool buffers" in {
-    val numBuffers = 10
+
     val futureList = Future.traverse((1 to numBuffers).toList)(_ => bufferPoolActor ? AllocateBuffer)
-    Await.result(futureList, 5 seconds) foreach { case GotBuffer(x) => bufferPoolActor ! FreeBuffer(x.asInstanceOf[AudioSystem.SampleBuffer]) }
-    assert(AudioSystem.DefaultBufferFactory.getCount == 10)
+    Await.result(futureList, 5 seconds) foreach { case GotBuffer(x) => bufferPoolActor ! FreeBuffer(x) }
+    assert(AudioSystem.DefaultBufferFactory.getCount == numBuffers)
   }
 
   object TestBufferHandler extends BufferHandler {
@@ -50,6 +50,6 @@ class BufferPoolSpec extends FlatSpec with TestActorSystem {
   "TestBufferHandler" should "get and free buffers" in {
     TestBufferHandler.test()
     // due to using a different BufferPoolActor should allocate another buffer
-    assert(AudioSystem.DefaultBufferFactory.getCount == 11)
+    assert(AudioSystem.DefaultBufferFactory.getCount == numBuffers+1)
   }
 }
