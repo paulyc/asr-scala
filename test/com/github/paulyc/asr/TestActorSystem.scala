@@ -19,35 +19,16 @@
 
 package com.github.paulyc.asr
 
-import akka.actor.Actor
+import akka.util.Timeout
+import scala.concurrent.ExecutionContext
+import akka.actor.ActorSystem
+import scala.concurrent.duration._
 
 /**
- * Created by paulyc on 10/17/13.
+ * Created by paulyc on 10/22/13.
  */
-
-class BufferPoolActor(factory: AudioSystem.SampleBufferFactory) extends Actor {
-  private class AudioBufferPool(factory: AudioSystem.SampleBufferFactory) extends AudioSystemDefaults {
-    var bufferList : List[SampleBuffer] = Nil
-
-    def getBuffer : SampleBuffer = {
-      bufferList match {
-        case head :: tail => {
-          bufferList = tail
-          head
-        }
-        case Nil => factory()
-      }
-    }
-
-    def storeBuffer(buffer : SampleBuffer) {
-      bufferList ::= buffer
-    }
-  }
-
-  private val pool = new AudioBufferPool(factory)
-
-  def receive = {
-    case AllocateBuffer => sender ! GotBuffer(pool.getBuffer)
-    case FreeBuffer(buffer) => pool.storeBuffer(buffer)
-  }
+trait TestActorSystem {
+  implicit val timeout = Timeout(1 second)
+  implicit val executionContext = ExecutionContext.Implicits.global
+  val actorSystem = ActorSystem()
 }

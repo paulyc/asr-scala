@@ -20,10 +20,10 @@
 package com.github.paulyc.asr
 
 import akka.actor.{ActorSystem, ActorRef, Props, Actor}
-import akka.util.Timeout
 import akka.pattern.ask
-import scala.util.{Success, Failure}
-import scala.concurrent.ExecutionContext
+import scala.concurrent.{Await, ExecutionContext}
+import scala.concurrent.duration._
+import akka.util.Timeout
 
 /**
  * Created by paulyc on 10/16/13.
@@ -43,8 +43,8 @@ trait AudioSystemDefaults {
   val DefaultChannels = 2
   val DefaultSampleRate = 48000
 
-  implicit val executionContext : ExecutionContext = ExecutionContext.Implicits.global
-  implicit val timeout = Timeout(5000L)
+  implicit val executionContext = ExecutionContext.Implicits.global
+  implicit val timeout = Timeout(5 seconds)
 }
 
 object AudioSystem extends AudioSystemDefaults {
@@ -68,35 +68,33 @@ case class StereoFrame(var left: AudioSystem.InternalSample, var right: AudioSys
     this.left = left
     this.right = right
   }
+  def unapply() = {
+    (left, right)
+  }
 }
 
 case class BufferConfig(sampleRate: Int)
 case class AudioBuffer(buffer: AudioSystem.SampleBuffer, config: BufferConfig)
 case class InternalAudioBuffer(buffer: AudioSystem.SampleBuffer)
 
-object EndOfAudioBuffers extends AudioBuffer(null, InternalBufferConfig)
-
-case class BufferRequest()
+case object BufferRequest
 case class BufferRequestConfig(config: BufferConfig)
 case class BufferResponse(buffer: Option[InternalAudioBuffer])
 
-case class AllocateBuffer()
+case object AllocateBuffer
 case class GotBuffer(buffer : AudioSystem.SampleBuffer)
 case class FreeBuffer(buffer : AudioSystem.SampleBuffer)
 
 object InternalBufferConfig extends BufferConfig(AudioSystem.DefaultSampleRate)
 
-
 case class SetSource(actor: ActorRef)
 
 trait BufferHandler extends AudioSystemDefaults {
   protected def allocateBuffer() : SampleBuffer = {
-    AudioSystem.bufferPoolActor ? AllocateBuffer() onComplete {
-      case Success(GotBuffer(buffer)) => return buffer
-      case Success(_)                 => throw new Exception("WTF happened in BufferHandler.allocateBuffer?")
-      case Failure(_)                 => throw new Exception("BufferHandler.allocateBuffer blew up")
+    Await.result(AudioSystem.bufferPoolActor ? AllocateBuffer, 1 second) match {
+      case GotBuffer(buffer) => buffer
+      case _ => null
     }
-    null
   }
 
   protected def freeBuffer(buffer: SampleBuffer) {
@@ -111,19 +109,41 @@ abstract class AudioSystemActor(implicit val outputSamplingRate: Int = AudioSyst
 
   def receive = {
     case SetSource(actor) => sourceActor = Some(actor)
-    case BufferRequest()  => handleBufferRequest()
+    case BufferRequest  => handleBufferRequest()
   }
 
   protected def handleBufferRequest()
 }
 
 class ZeroSourceActor extends AudioSystemActor {
-  override protected def handleBufferRequest() {
+  protected def handleBufferRequest() {
     val buffer = allocateBuffer()
     for (frame <- buffer) {
       frame(0.0f, 0.0f)
     }
-    BufferResponse(Some(InternalAudioBuffer(buffer)))
+    sender ! BufferResponse(Some(InternalAudioBuffer(buffer)))
+  }
+}
+
+class SineSourceActor(initialFrequency: Float = 440.0f) extends AudioSystemActor {
+  var time = 0.0
+  var frequency = initialFrequency
+  var _2_pi_f = 2.0f * scala.math.Pi * frequency
+  val period = 1.0 / DefaultSampleRate
+
+  def setFrequency(frequency: Float) {
+    this.frequency = frequency
+    _2_pi_f = 2.0f * scala.math.Pi * frequency
+  }
+
+  protected def handleBufferRequest() {
+    val buffer = allocateBuffer()
+    for (frame <- buffer) {
+      val value = scala.math.sin(_2_pi_f * time).toFloat
+      frame(value, value)
+      time += period
+    }
+    sender ! BufferResponse(Some(InternalAudioBuffer(buffer)))
   }
 }
 
@@ -143,13 +163,13 @@ class FileSourceActor extends AudioSystemActor {
 
   object InputBufferConfig extends BufferConfig(NativeSampleRate)
 
-  override protected def handleBufferRequest() {
+  protected def handleBufferRequest() {
     sampleRateConverter match {
       case Some(converter) => {
         if (sender == converter) {
           sender ! BufferResponse(nextBufferFromFile())
         } else {
-          converter ? BufferRequest() onSuccess { case _ => sender ! _ }
+          converter ? BufferRequest onSuccess { case _ => sender ! _ }
         }
       }
       case None => sender ! BufferResponse(nextBufferFromFile())
